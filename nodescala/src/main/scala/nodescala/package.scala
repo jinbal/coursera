@@ -17,12 +17,11 @@ package object nodescala {
       */
     def always[T](value: T): Future[T] = Promise.successful(value).future
 
-
     /** Returns a future that is never completed.
       *
       * This future may be useful when testing if timeout logic works correctly.
       */
-    def never[T]: Future[T] = Promise[T]().future
+    def never[T]: Future[T] = Promise[T].future
 
     /** Given a list of futures `fs`, returns the future holding the list of values of all the futures from `fs`.
       * The returned future is completed only once all of the futures in `fs` have been completed.
@@ -33,7 +32,7 @@ package object nodescala {
       fs match {
         case Nil => Future(Nil)
         case head :: rest => head flatMap (t => all(rest)
-                                                .flatMap(ts => Future(t :: ts)))
+          .flatMap(ts => Future(t :: ts)))
       }
     }
 
@@ -59,7 +58,7 @@ package object nodescala {
 
     /** Returns a future with a unit value that is completed after time `t`.
       */
-    def delay(t: Duration): Future[Unit] = ???
+    def delay(t: Duration): Future[Unit] = Future(Await.ready(Future(Thread.sleep(t.toMillis)), t))
 
     /** Completes this future with user input.
       */
@@ -139,7 +138,7 @@ package object nodescala {
     * returns a `cancellationToken` which is cancelled by calling `unsubscribe`.
     *
     * After calling `unsubscribe` once, the associated `cancellationToken` will
-    * forever remain cancelled -- its `isCancelled` will return `false.
+    * forever remain cancelled -- its `isCancelled` will return false.
     */
   trait CancellationTokenSource extends Subscription {
     def cancellationToken: CancellationToken

@@ -1,19 +1,19 @@
 package nodescala
 
-import scala.language.postfixOps
-import scala.util.{Try, Success, Failure}
 import scala.collection._
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent._
-import ExecutionContext.Implicits.global
 import scala.concurrent.duration._
-import scala.async.Async.{async, await}
-import org.scalatest._
-import NodeScala._
+import scala.language.postfixOps
+
+import nodescala.NodeScala._
 import org.junit.runner.RunWith
+import org.scalatest._
+import org.scalatest.concurrent.AsyncAssertions
 import org.scalatest.junit.JUnitRunner
 
 @RunWith(classOf[JUnitRunner])
-class NodeScalaSuite extends FunSuite {
+class NodeScalaSuite extends FunSuite with ShouldMatchers with AsyncAssertions {
 
   test("A Future should always be completed") {
     val always = Future.always(517)
@@ -31,14 +31,34 @@ class NodeScalaSuite extends FunSuite {
     }
   }
 
-  
-  
+  test("should convert list of futures into future of list") {
+    val futureOfList = Future.all(List(Future.always(1), Future.always(2), Future.always(3)))
+    assert(Await.result(futureOfList, 500 millis) == List(1, 2, 3))
+  }
+
+  test("should return the first completed future") {
+    val firstCompleted = Future.any(List(Future.never[Int], Future.always(55), Future.delay(100 millis)))
+    assert(Await.result(firstCompleted, 500 millis) == 55)
+  }
+
+  test("should not complete before delay") {
+    val delayed = Future.delay(2 seconds)
+    try {
+      Await.ready(delayed, 1 second)
+      fail("future completed early")
+    } catch {
+      case t: TimeoutException => // ok!
+    }
+  }
+
   class DummyExchange(val request: Request) extends Exchange {
     @volatile var response = ""
     val loaded = Promise[String]()
+
     def write(s: String) {
       response += s
     }
+
     def close() {
       loaded.success(response)
     }
@@ -91,6 +111,7 @@ class NodeScalaSuite extends FunSuite {
       l.emit(req)
     }
   }
+
   test("Server should serve requests") {
     val dummy = new DummyServer(8191)
     val dummySubscription = dummy.start("/testDir") {
@@ -114,6 +135,62 @@ class NodeScalaSuite extends FunSuite {
     dummySubscription.unsubscribe()
   }
 
+  test("Server should be stoppable if receives infinite  response") {
+    val dummy = new DummyServer(8191)
+    val dummySubscription = dummy.start("/testDir") {
+      request => Iterator.continually("a")
+    }
+
+    // wait until server is really installed
+    Thread.sleep(500)
+
+    val webpage = dummy.emit("/testDir", Map("Any" -> List("thing")))
+    try {
+      // let's wait some time
+      Await.result(webpage.loaded.future, 1 second)
+      fail("infinite response ended")
+    } catch {
+      case e: TimeoutException =>
+    }
+
+    // stop everything
+    dummySubscription.unsubscribe()
+    Thread.sleep(500)
+    webpage.loaded.future.now // should not get NoSuchElementException
+  }
+
+  test("A Future should be completed after 1s delay") {
+    val w = new Waiter
+    val start = System.currentTimeMillis()
+
+    Future.delay(1 second) onComplete { case _ =>
+      val duration = System.currentTimeMillis() - start
+      duration should (be >= 1000L and be < 1100L)
+
+      w.dismiss()
+    }
+
+    w.await(timeout(2 seconds))
+  }
+
+  test("Two sequential delays of 1s should delay by 2s") {
+    val w = new Waiter
+    val start = System.currentTimeMillis()
+
+    val combined = for {
+      f1 <- Future.delay(1 second)
+      f2 <- Future.delay(1 second)
+    } yield ()
+
+    combined onComplete { case _ =>
+      val duration = System.currentTimeMillis() - start
+      duration should (be >= 2000L and be < 2100L)
+
+      w.dismiss()
+    }
+
+    w.await(timeout(3 seconds))
+  }
 }
 
 
