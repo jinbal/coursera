@@ -1,3 +1,5 @@
+import java.util.NoSuchElementException
+
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent._
 import scala.concurrent.duration._
@@ -32,7 +34,7 @@ package object nodescala {
       fs match {
         case Nil => Future(Nil)
         case head :: rest => head flatMap (t => all(rest)
-          .flatMap(ts => Future(t :: ts)))
+                                                .flatMap(ts => Future(t :: ts)))
       }
     }
 
@@ -86,7 +88,10 @@ package object nodescala {
       * However, it is also non-deterministic -- it may throw or return a value
       * depending on the current state of the `Future`.
       */
-    def now: T = ???
+    def now: T = {
+      if(!f.isCompleted) throw new NoSuchElementException
+      Await.result(f, 0 millis)
+    }
 
     /** Continues the computation of this future by taking the current future
       * and mapping it into another future.

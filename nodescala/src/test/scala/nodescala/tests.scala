@@ -1,31 +1,28 @@
 package nodescala
 
-import scala.collection._
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent._
-import scala.concurrent.duration._
-import scala.language.postfixOps
-
 import nodescala.NodeScala._
 import org.junit.runner.RunWith
 import org.scalatest._
 import org.scalatest.concurrent.AsyncAssertions
 import org.scalatest.junit.JUnitRunner
 
+import scala.collection._
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent._
+import scala.concurrent.duration._
+import scala.language.postfixOps
+
 @RunWith(classOf[JUnitRunner])
 class NodeScalaSuite extends FunSuite with ShouldMatchers with AsyncAssertions {
 
   test("A Future should always be completed") {
-    val always = Future.always(517)
-
-    assert(Await.result(always, 0 nanos) == 517)
+    Await.result(Future.always(517), 0 nanos) should be(517)
   }
-  test("A Future should never be completed") {
-    val never = Future.never[Int]
 
+  test("A Future should never be completed") {
     try {
-      Await.result(never, 1 second)
-      assert(false)
+      Await.result(Future.never[Int], 1 second)
+      fail("a never should never complete")
     } catch {
       case t: TimeoutException => // ok!
     }
@@ -33,22 +30,41 @@ class NodeScalaSuite extends FunSuite with ShouldMatchers with AsyncAssertions {
 
   test("should convert list of futures into future of list") {
     val futureOfList = Future.all(List(Future.always(1), Future.always(2), Future.always(3)))
-    assert(Await.result(futureOfList, 500 millis) == List(1, 2, 3))
+    Await.result(futureOfList, 500 millis) should be(List(1, 2, 3))
   }
 
   test("should return the first completed future") {
     val firstCompleted = Future.any(List(Future.never[Int], Future.always(55), Future.delay(100 millis)))
-    assert(Await.result(firstCompleted, 500 millis) == 55)
+    Await.result(firstCompleted, 500 millis) should be(55)
   }
 
   test("should not complete before delay") {
-    val delayed = Future.delay(2 seconds)
     try {
-      Await.ready(delayed, 1 second)
+      Await.ready(Future.delay(2 seconds), 1 second)
       fail("future completed early")
     } catch {
       case t: TimeoutException => // ok!
     }
+  }
+
+  test("Now should return error when there is a large delay") {
+    intercept[NoSuchElementException] {
+      Future.never[Int].now
+    }
+  }
+
+  test("now should return value when it is available") {
+    Future.always(3).now should be(3)
+  }
+
+  test("now should return error for the smallest delay") {
+    intercept[NoSuchElementException] {
+      Future.delay(1 nano).now
+    }
+  }
+
+  test("continue returns the nested future value") {
+    val inner = Future
   }
 
   class DummyExchange(val request: Request) extends Exchange {
