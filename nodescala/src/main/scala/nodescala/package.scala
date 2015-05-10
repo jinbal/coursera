@@ -60,7 +60,7 @@ package object nodescala {
 
     /** Returns a future with a unit value that is completed after time `t`.
       */
-    def delay(t: Duration): Future[Unit] = Future(Await.ready(Future(Thread.sleep(t.toMillis)), t))
+    def delay(t: Duration): Future[Unit] = Future(blocking(Thread.sleep(t.toMillis)))
 
     /** Completes this future with user input.
       */
@@ -72,7 +72,11 @@ package object nodescala {
 
     /** Creates a cancellable context for an execution and runs it.
       */
-    def run()(f: CancellationToken => Future[Unit]): Subscription = ???
+    def run()(f: CancellationToken => Future[Unit]): Subscription = {
+      val source = CancellationTokenSource()
+      f(source.cancellationToken)
+      source
+    }
 
   }
 
@@ -89,7 +93,7 @@ package object nodescala {
       * depending on the current state of the `Future`.
       */
     def now: T = {
-      if(!f.isCompleted) throw new NoSuchElementException
+      if (!f.isCompleted) throw new NoSuchElementException
       Await.result(f, 0 millis)
     }
 
@@ -99,7 +103,16 @@ package object nodescala {
       * The function `cont` is called only after the current future completes.
       * The resulting future contains a value returned by `cont`.
       */
-    def continueWith[S](cont: Future[T] => S): Future[S] = ???
+    def continueWith[S](cont: Future[T] => S): Future[S] = {
+      val promise: Promise[S] = Promise[S]()
+      f.onComplete { result =>
+        result match {
+          case Success(_) => promise.complete(Try(cont(f)))
+          case Failure(exc) => promise.failure(exc)
+        }
+      }
+      promise.future
+    }
 
     /** Continues the computation of this future by taking the result
       * of the current future and mapping it into another future.
@@ -107,7 +120,16 @@ package object nodescala {
       * The function `cont` is called only after the current future completes.
       * The resulting future contains a value returned by `cont`.
       */
-    def continue[S](cont: Try[T] => S): Future[S] = ???
+    def continue[S](cont: Try[T] => S): Future[S] = {
+      val promise: Promise[S] = Promise[S]()
+      f.onComplete { result =>
+        result match {
+          case Success(_) => promise.complete(Try(cont(result)))
+          case Failure(exc) => promise.failure(exc)
+        }
+      }
+      promise.future
+    }
 
   }
 

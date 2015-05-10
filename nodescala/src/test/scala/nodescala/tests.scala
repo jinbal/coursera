@@ -63,9 +63,62 @@ class NodeScalaSuite extends FunSuite with ShouldMatchers with AsyncAssertions {
     }
   }
 
-  test("continue returns the nested future value") {
-    val inner = Future
+  test("should continue with inner value") {
+    val f = Future.always(2).continue { x => 3 }
+    Await.result(f, 1 second) should be(3)
   }
+
+  test("continueWith should continue with the function") {
+    val delay = Future.delay(2 millis)
+    val always = (f: Future[Unit]) => 42
+    Await.result(delay.continueWith(always), 1000 millis) should be(42)
+  }
+
+  test("continueWith should wait for the first future to complete") {
+    val delay = Future.delay(1 second)
+    val always = (f: Future[Unit]) => 42
+
+    try {
+      Await.result(delay.continueWith(always), 500 millis)
+      assert(false)
+    } catch {
+      case t: TimeoutException => // ok
+    }
+  }
+
+  test("A Future should be completed after 1s delay") {
+    val w = new Waiter
+    val start = System.currentTimeMillis()
+
+    Future.delay(1 second) onComplete { case _ =>
+      val duration = System.currentTimeMillis() - start
+      duration should (be >= 1000L and be < 1100L)
+
+      w.dismiss()
+    }
+
+    w.await(timeout(2 seconds))
+  }
+
+  test("Two sequential delays of 1s should delay by 2s") {
+    val w = new Waiter
+    val start = System.currentTimeMillis()
+
+    val combined = for {
+      f1 <- Future.delay(1 second)
+      f2 <- Future.delay(1 second)
+    } yield ()
+
+    combined onComplete { case _ =>
+      val duration = System.currentTimeMillis() - start
+      duration should (be >= 2000L and be < 2100L)
+
+      w.dismiss()
+    }
+
+    w.await(timeout(3 seconds))
+  }
+
 
   class DummyExchange(val request: Request) extends Exchange {
     @volatile var response = ""
@@ -175,37 +228,28 @@ class NodeScalaSuite extends FunSuite with ShouldMatchers with AsyncAssertions {
     webpage.loaded.future.now // should not get NoSuchElementException
   }
 
-  test("A Future should be completed after 1s delay") {
-    val w = new Waiter
-    val start = System.currentTimeMillis()
 
-    Future.delay(1 second) onComplete { case _ =>
-      val duration = System.currentTimeMillis() - start
-      duration should (be >= 1000L and be < 1100L)
-
-      w.dismiss()
+  test("Future.run should work as expected") {
+    var res = -1
+    val working = Future.run() {
+      ct => Future {
+        while (ct.nonCancelled) {
+          // do some work
+        }
+        res = 7
+      }
     }
 
-    w.await(timeout(2 seconds))
-  }
+    Await.ready(Future.delay(500 milliseconds) andThen {
+      case _ =>
+        res should be(-1)
+        working.unsubscribe()
+    }, 1 second)
 
-  test("Two sequential delays of 1s should delay by 2s") {
-    val w = new Waiter
-    val start = System.currentTimeMillis()
-
-    val combined = for {
-      f1 <- Future.delay(1 second)
-      f2 <- Future.delay(1 second)
-    } yield ()
-
-    combined onComplete { case _ =>
-      val duration = System.currentTimeMillis() - start
-      duration should (be >= 2000L and be < 2100L)
-
-      w.dismiss()
-    }
-
-    w.await(timeout(3 seconds))
+    Await.ready(Future.delay(100 milliseconds) andThen {
+      case _ =>
+        res should be(7)
+    }, 1 second)
   }
 }
 
