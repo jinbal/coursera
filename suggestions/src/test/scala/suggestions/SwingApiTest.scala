@@ -70,7 +70,7 @@ class SwingApiTest extends FunSuite {
   
   test("SwingApi should emit text field values to the observable") {
     val textField = new swingApi.TextField
-    val values = textField.textValues
+    val values: Observable[String] = textField.textValues
 
     val observed = mutable.Buffer[String]()
     val sub = values subscribe {
@@ -126,4 +126,20 @@ class SwingApiTest extends FunSuite {
     assert(observed == Seq("T", "Tu", "Tur", "Turi", "Turin", "Turing"), observed)
     assert(observed2 == Seq("T", "Tu", "Tur", "Turi", "Turin", "Turing"), observed2)
   }
+
+  test("SwingApi should emit button clicks to the observable") {
+    val button = new swingApi.Button
+    val values: Observable[Button] = button.clicks
+
+    val observed = mutable.Buffer[Button]()
+    val sub = values subscribe {
+      observed += _
+    }
+
+    button.click()
+    button.click()
+
+    assert(observed == Seq(button, button), observed)
+  }
+
 }
