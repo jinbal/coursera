@@ -69,4 +69,32 @@ class WikipediaApiTest extends FunSuite {
     assert(total == (1 + 1 + 2 + 1 + 2 + 3), s"Sum: $total")
   }
 
+  test("concatRecovered given test case 2") {
+    val request = Observable.just(1, 2, 3).concatRecovered(num => Observable.just(num, num, num))
+    val expectedString = "List(Success(1), Success(1), Success(1), Success(2), Success(2), Success(2), Success(3), Success(3), Success(3))"
+    val actual = request.toBlocking.toList.toString
+    println(actual)
+    assert(actual == expectedString, actual)
+  }
+
+  test("Observable should complete before timeout") {
+    val start = System.currentTimeMillis
+    val timedOutStream = Observable.from(1 to 3).zip(Observable.interval(100 millis)).timedOut(3L)
+    val contents = timedOutStream.toBlocking.toList
+    val totalTime = System.currentTimeMillis - start
+    assert(contents == List((1,0),(2,1),(3,2)))
+    assert(totalTime <= 1000)
+  }
+
+  test("Observable(1, 2, 3).zip(Observable.interval(400 millis)).timedOut(1L) should return the first two values, and complete without errors") {
+    val timedOutStream = Observable.from(1 to 3).zip(Observable.interval(400 millis)).timedOut(1L)
+    val contents = timedOutStream.toBlocking.toList
+    assert(contents == List((1,0),(2,1)))
+  }
+
+  test("Observable(1, 2, 3).zip(Observable.interval(700 millis)).timedOut(1L) should return the first value, and complete without errors") {
+    val timedOutStream = Observable.from(1 to 3).zip(Observable.interval(700 millis)).timedOut(1L)
+    val contents = timedOutStream.toBlocking.toList
+    assert(contents == List((1,0)))
+  }
 }
