@@ -3,14 +3,18 @@
  */
 package actorbintree
 
+import actorbintree.BinaryTreeSet.Insert
 import akka.actor._
+
 import scala.collection.immutable.Queue
 
 object BinaryTreeSet {
 
   trait Operation {
     def requester: ActorRef
+
     def id: Int
+
     def elem: Int
   }
 
@@ -36,14 +40,14 @@ object BinaryTreeSet {
     */
   case class Remove(requester: ActorRef, id: Int, elem: Int) extends Operation
 
-  /** Request to perform garbage collection*/
+  /** Request to perform garbage collection */
   case object GC
 
   /** Holds the answer to the Contains request with identifier `id`.
     * `result` is true if and only if the element is present in the tree.
     */
   case class ContainsResult(id: Int, result: Boolean) extends OperationReply
-  
+
   /** Message to signal successful completion of an insert or remove operation. */
   case class OperationFinished(id: Int) extends OperationReply
 
@@ -51,8 +55,8 @@ object BinaryTreeSet {
 
 
 class BinaryTreeSet extends Actor {
+
   import BinaryTreeSet._
-  import BinaryTreeNode._
 
   def createRoot: ActorRef = context.actorOf(BinaryTreeNode.props(0, initiallyRemoved = true))
 
@@ -66,7 +70,13 @@ class BinaryTreeSet extends Actor {
 
   // optional
   /** Accepts `Operation` and `GC` messages. */
-  val normal: Receive = { case _ => ??? }
+  val normal: Receive = {
+    case Insert(requester, id, elem) => root ! Insert(requester, id, elem)
+    case Contains(requester, id, elem) =>
+    case Remove(requester, id, elem) =>
+    case GC =>
+    case _ => ???
+  }
 
   // optional
   /** Handles messages while garbage collection is performed.
@@ -78,20 +88,23 @@ class BinaryTreeSet extends Actor {
 }
 
 object BinaryTreeNode {
+
   trait Position
 
   case object Left extends Position
+
   case object Right extends Position
 
   case class CopyTo(treeNode: ActorRef)
+
   case object CopyFinished
 
-  def props(elem: Int, initiallyRemoved: Boolean) = Props(classOf[BinaryTreeNode],  elem, initiallyRemoved)
+  def props(elem: Int, initiallyRemoved: Boolean) = Props(classOf[BinaryTreeNode], elem, initiallyRemoved)
 }
 
 class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
+
   import BinaryTreeNode._
-  import BinaryTreeSet._
 
   var subtrees = Map[Position, ActorRef]()
   var removed = initiallyRemoved
@@ -101,7 +114,14 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
 
   // optional
   /** Handles `Operation` messages and `CopyTo` requests. */
-  val normal: Receive = { case _ => ??? }
+  val normal: Receive = {
+    case Insert(requester, id, newElem) =>
+      if(newElem < elem) {
+        subtrees
+      }
+      if(newElem > elem)
+    case _ => ???
+  }
 
   // optional
   /** `expected` is the set of ActorRefs whose replies we are waiting for,
