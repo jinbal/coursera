@@ -50,12 +50,17 @@ class BinaryTreeSuite(_system: ActorSystem) extends TestKit(_system) with FunSui
     expectMsg(OperationFinished(1))
   }
 
-  test("insert 1 should return OperationFinished") {
+  test("insert larger than root should return OperationFinished") {
     val topNode = system.actorOf(Props[BinaryTreeSet])
     topNode ! Insert(testActor, id = 1, 1)
     expectMsg(OperationFinished(1))
   }
 
+  test("insert less than than root should return OperationFinished") {
+    val topNode = system.actorOf(Props[BinaryTreeSet])
+    topNode ! Insert(testActor, id = 1, -1)
+    expectMsg(OperationFinished(1))
+  }
 
   test("proper inserts and lookups") {
     val topNode = system.actorOf(Props[BinaryTreeSet])

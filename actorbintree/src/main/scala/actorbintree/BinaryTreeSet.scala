@@ -3,10 +3,10 @@
  */
 package actorbintree
 
-import scala.collection.immutable.Queue
-
-import akka.actor._
 import actorbintree.BinaryTreeSet.{Insert, OperationFinished}
+import akka.actor._
+
+import scala.collection.immutable.Queue
 
 object BinaryTreeSet {
 
@@ -114,21 +114,24 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
   // optional
   /** Handles `Operation` messages and `CopyTo` requests. */
   val normal: Receive = {
-    case Insert(requester, id, newElem) if (newElem == elem) => requester ! OperationFinished(id)
-    case Insert(requester, id, newElem) if (newElem > elem) =>
-      val node = subtrees.get(Right)
-      node match {
-        case (Some(nodeActorRef)) =>
-          nodeActorRef ! Insert(requester, id, newElem)
-        case None =>
-          subtrees += (Right -> context.actorOf(props(newElem,false)))
-          requester ! OperationFinished(id)
-      }
-    case Insert(requester, id, newElem) if (newElem < elem) =>
+    case Insert(requester, id, newElem) =>
+      if (newElem == elem) requester ! OperationFinished(id)
+      else if (newElem > elem) createOrDelegate(requester, Insert(requester, id, newElem), Right)
+      else if (newElem < elem) createOrDelegate(requester, Insert(requester, id, newElem), Left)
     case _ => ???
   }
 
-  // optional
+  private def createOrDelegate(requester: ActorRef, insert: Insert, right: Position): Unit = {
+    val node = subtrees.get(right)
+    node match {
+      case (Some(nodeActorRef)) =>
+        nodeActorRef ! insert
+      case None =>
+        subtrees += (right -> context.actorOf(props(insert.elem, false)))
+        requester ! OperationFinished(insert.id)
+    }
+  }
+
   /** `expected` is the set of ActorRefs whose replies we are waiting for,
     * `insertConfirmed` tracks whether the copy of this node to the new tree has been confirmed.
     */
