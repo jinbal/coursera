@@ -3,10 +3,10 @@
  */
 package actorbintree
 
-import actorbintree.BinaryTreeSet.{Insert, OperationFinished}
-import akka.actor._
-
 import scala.collection.immutable.Queue
+
+import akka.actor._
+import actorbintree.BinaryTreeSet.{Insert, OperationFinished}
 
 object BinaryTreeSet {
 
@@ -52,7 +52,6 @@ object BinaryTreeSet {
   case class OperationFinished(id: Int) extends OperationReply
 
 }
-
 
 class BinaryTreeSet extends Actor {
 
@@ -117,6 +116,14 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
   val normal: Receive = {
     case Insert(requester, id, newElem) if (newElem == elem) => requester ! OperationFinished(id)
     case Insert(requester, id, newElem) if (newElem > elem) =>
+      val node = subtrees.get(Right)
+      node match {
+        case (Some(nodeActorRef)) =>
+          nodeActorRef ! Insert(requester, id, newElem)
+        case None =>
+          subtrees += (Right -> context.actorOf(props(newElem,false)))
+          requester ! OperationFinished(id)
+      }
     case Insert(requester, id, newElem) if (newElem < elem) =>
     case _ => ???
   }
@@ -126,6 +133,5 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
     * `insertConfirmed` tracks whether the copy of this node to the new tree has been confirmed.
     */
   def copying(expected: Set[ActorRef], insertConfirmed: Boolean): Receive = ???
-
 
 }
