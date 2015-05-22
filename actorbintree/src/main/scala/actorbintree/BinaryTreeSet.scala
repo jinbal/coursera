@@ -3,7 +3,7 @@
  */
 package actorbintree
 
-import actorbintree.BinaryTreeSet.Insert
+import actorbintree.BinaryTreeSet.{Insert, OperationFinished}
 import akka.actor._
 
 import scala.collection.immutable.Queue
@@ -115,11 +115,9 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
   // optional
   /** Handles `Operation` messages and `CopyTo` requests. */
   val normal: Receive = {
-    case Insert(requester, id, newElem) =>
-      if(newElem < elem) {
-        subtrees
-      }
-      if(newElem > elem)
+    case Insert(requester, id, newElem) if (newElem == elem) => requester ! OperationFinished(id)
+    case Insert(requester, id, newElem) if (newElem > elem) =>
+    case Insert(requester, id, newElem) if (newElem < elem) =>
     case _ => ???
   }
 
