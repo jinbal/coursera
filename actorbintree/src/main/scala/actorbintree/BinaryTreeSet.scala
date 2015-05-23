@@ -3,7 +3,7 @@
  */
 package actorbintree
 
-import actorbintree.BinaryTreeSet.{Insert, OperationFinished}
+import actorbintree.BinaryTreeSet._
 import akka.actor._
 
 import scala.collection.immutable.Queue
@@ -71,8 +71,8 @@ class BinaryTreeSet extends Actor {
   /** Accepts `Operation` and `GC` messages. */
   val normal: Receive = {
     case Insert(requester, id, elem) => root ! Insert(requester, id, elem)
-    case Contains(requester, id, elem) =>
-    case Remove(requester, id, elem) =>
+    case Contains(requester, id, elem) => root ! Contains(requester, id, elem)
+    case Remove(requester, id, elem) => root ! Remove(requester, id, elem)
     case GC =>
     case _ => ???
   }
@@ -112,19 +112,53 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
   def receive = normal
 
   // optional
+
+
   /** Handles `Operation` messages and `CopyTo` requests. */
   val normal: Receive = {
     case Insert(requester, id, newElem) =>
-      if (newElem == elem) requester ! OperationFinished(id)
+      if (newElem == elem) {
+        removed = false
+        requester ! OperationFinished(id)
+      }
       else if (newElem > elem) createOrDelegate(requester, Insert(requester, id, newElem), Right)
       else if (newElem < elem) createOrDelegate(requester, Insert(requester, id, newElem), Left)
+    case Contains(requester, id, elemToFind) =>
+      if (elemToFind == elem && !removed) requester ! ContainsResult(id, true)
+      else if (elemToFind == elem && removed) requester ! ContainsResult(id, false)
+      else if (elemToFind > elem) findOrDelegate(requester, Contains(requester, id, elemToFind), Right)
+      else if (elemToFind < elem) findOrDelegate(requester, Contains(requester, id, elemToFind), Left)
+    case Remove(requester, id, elemToRemove) =>
+      if (elemToRemove == elem) {
+        removed = true
+        requester ! OperationFinished(id)
+      }
+      else if (elemToRemove > elem) deleteOrDelegate(requester, Remove(requester, id, elemToRemove), Right)
+      else if (elemToRemove < elem) deleteOrDelegate(requester, Remove(requester, id, elemToRemove), Left)
     case _ => ???
   }
+
+  def deleteOrDelegate(requester: ActorRef, remove: Remove, position: Position): Unit = {
+    val node = subtrees.get(position)
+    node match {
+      case Some(actorRef) => actorRef ! remove
+      case None => requester ! OperationFinished(remove.id)
+    }
+  }
+
+  def findOrDelegate(requester: ActorRef, contains: Contains, position: Position) = {
+    val node = subtrees.get(position)
+    node match {
+      case Some(actorRef) => actorRef ! contains
+      case None => requester ! ContainsResult(contains.id, false)
+    }
+  }
+
 
   private def createOrDelegate(requester: ActorRef, insert: Insert, right: Position): Unit = {
     val node = subtrees.get(right)
     node match {
-      case (Some(nodeActorRef)) =>
+      case Some(nodeActorRef) =>
         nodeActorRef ! insert
       case None =>
         subtrees += (right -> context.actorOf(props(insert.elem, false)))
