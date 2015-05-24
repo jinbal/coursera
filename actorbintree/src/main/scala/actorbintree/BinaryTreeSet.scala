@@ -111,8 +111,6 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
   // optional
   def receive = normal
 
-  // optional
-
 
   /** Handles `Operation` messages and `CopyTo` requests. */
   val normal: Receive = {
