@@ -50,6 +50,8 @@ class Replicator(val replica: ActorRef) extends Actor {
     val ack: (ActorRef, Replicate) = acks.get(seq).get
     acks -= seq
     ack._1 ! Replicated(ack._2.key, ack._2.id)
+    val cancellable: Cancellable = retries.get(seq).get
+    cancellable.cancel()
     retries -= seq
   }
 

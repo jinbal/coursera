@@ -1,9 +1,12 @@
 package kvstore
 
-import akka.actor.{Actor, ActorRef, Props}
+import akka.actor.SupervisorStrategy.Restart
+import akka.actor._
 import kvstore.Arbiter._
+import kvstore.Persistence.{Persist, Persisted, PersistenceException}
 import kvstore.Replica._
 import kvstore.Replicator.{Snapshot, SnapshotAck}
+import scala.concurrent.duration._
 
 object Replica {
 
@@ -32,7 +35,11 @@ object Replica {
 
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
+  import scala.concurrent.ExecutionContext.Implicits.global
+
   arbiter ! Join
+
+  val persistence = context.actorOf(persistenceProps)
 
   var kv = Map.empty[String, String]
   // a map from secondary replicas to replicators
@@ -40,7 +47,19 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
 
-  var expectedSeq:Long = 0
+  var persistenceAcks = Map.empty[Long, (ActorRef, Persist)]
+  var retries = Map.empty[Long, Cancellable]
+
+
+  override val supervisorStrategy: SupervisorStrategy = OneForOneStrategy() {
+    case _: PersistenceException => Restart
+  }
+
+  var expectedSeq: Long = 0
+
+  def updateExpectedSeq(seq: Long) = {
+    expectedSeq = seq + 1
+  }
 
   def receive = {
     case JoinedPrimary => context.become(leader)
@@ -55,6 +74,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       remove(key, id)
     case Get(key, id) =>
       find(key, id)
+    case Persisted(key, id) =>
+      val ack: (ActorRef) = findSenderToConfirmPersistence(id)
+      ack ! OperationAck(id)
     case _ =>
   }
 
@@ -62,9 +84,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   val replica: Receive = {
     case Get(key, id) => find(key, id)
     case Snapshot(key, valueOptions, seq) =>
-      if(seq < expectedSeq) {
-        sender ! SnapshotAck(key,seq)
-      } else if(seq == expectedSeq) {
+      if (seq < expectedSeq) {
+        sender ! SnapshotAck(key, seq)
+      } else if (seq == expectedSeq) {
         valueOptions match {
           case Some(value) =>
             insertSnapshot(key, seq, value)
@@ -72,23 +94,37 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
             removeSnapshot(key, seq)
         }
       }
+    case Persisted(key, id) =>
+      val ack: (ActorRef) = findSenderToConfirmPersistence(id)
+      ack ! SnapshotAck(key, id)
+
     case _ =>
+  }
+
+  def findSenderToConfirmPersistence(id: Long) = {
+    val ack: (ActorRef, Persist) = persistenceAcks.get(id).get
+    persistenceAcks -= id
+    val cancellable: Cancellable = retries.get(id).get
+    cancellable.cancel()
+    retries -= id
+    ack._1
   }
 
   def insertSnapshot(key: String, seq: Long, value: String): Unit = {
     kv += (key -> value)
-    sender ! SnapshotAck(key, seq)
+    val persist: Persist = Persist(key, Some(value), seq)
+    persistence ! persist
     updateExpectedSeq(seq)
+    scheduleRetries(seq, persist)
   }
 
-  def updateExpectedSeq(seq: Long): Unit = {
-    expectedSeq = seq + 1
-  }
 
   def removeSnapshot(key: String, seq: Long): Unit = {
     kv -= (key)
-    sender ! SnapshotAck(key, seq)
+    val persist: Persist = Persist(key, None, seq)
+    persistence ! persist
     updateExpectedSeq(seq)
+    scheduleRetries(seq, persist)
   }
 
   def find(key: String, id: Long): Unit = {
@@ -104,6 +140,11 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     kv += (key -> value)
     sender ! OperationAck(id)
   }
+
+  def scheduleRetries(seq: Long, persist: Persist): Unit = {
+    retries += seq -> context.system.scheduler.schedule(100 millis, 100 millis, persistence, persist)
+  }
+
 
 }
 
