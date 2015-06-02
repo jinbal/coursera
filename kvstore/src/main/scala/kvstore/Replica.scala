@@ -78,13 +78,17 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   def insertSnapshot(key: String, seq: Long, value: String): Unit = {
     kv += (key -> value)
     sender ! SnapshotAck(key, seq)
-    expectedSeq =seq+1
+    updateExpectedSeq(seq)
+  }
+
+  def updateExpectedSeq(seq: Long): Unit = {
+    expectedSeq = seq + 1
   }
 
   def removeSnapshot(key: String, seq: Long): Unit = {
     kv -= (key)
     sender ! SnapshotAck(key, seq)
-    expectedSeq =seq+1
+    updateExpectedSeq(seq)
   }
 
   def find(key: String, id: Long): Unit = {
