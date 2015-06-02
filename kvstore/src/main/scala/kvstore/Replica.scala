@@ -3,6 +3,7 @@ package kvstore
 import akka.actor.{Actor, ActorRef, Props}
 import kvstore.Arbiter._
 import kvstore.Replica._
+import kvstore.Replicator.{Snapshot, SnapshotAck}
 
 object Replica {
 
@@ -31,12 +32,7 @@ object Replica {
 
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
-  /*
-   * The contents of this actor is just a suggestion, you can implement it in any way you like.
-   */
-
   arbiter ! Join
-
 
   var kv = Map.empty[String, String]
   // a map from secondary replicas to replicators
@@ -44,6 +40,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
 
+  var expectedSeq:Long = 0
 
   def receive = {
     case JoinedPrimary => context.become(leader)
@@ -63,7 +60,31 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   /* TODO Behavior for the replica role. */
   val replica: Receive = {
+    case Get(key, id) => find(key, id)
+    case Snapshot(key, valueOptions, seq) =>
+      if(seq < expectedSeq) {
+        sender ! SnapshotAck(key,seq)
+      } else if(seq == expectedSeq) {
+        valueOptions match {
+          case Some(value) =>
+            insertSnapshot(key, seq, value)
+          case None =>
+            removeSnapshot(key, seq)
+        }
+      }
     case _ =>
+  }
+
+  def insertSnapshot(key: String, seq: Long, value: String): Unit = {
+    kv += (key -> value)
+    sender ! SnapshotAck(key, seq)
+    expectedSeq =seq+1
+  }
+
+  def removeSnapshot(key: String, seq: Long): Unit = {
+    kv -= (key)
+    sender ! SnapshotAck(key, seq)
+    expectedSeq =seq+1
   }
 
   def find(key: String, id: Long): Unit = {
@@ -79,7 +100,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     kv += (key -> value)
     sender ! OperationAck(id)
   }
-
 
 }
 
