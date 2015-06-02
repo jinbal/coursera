@@ -112,19 +112,21 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   def insertSnapshot(key: String, seq: Long, value: String): Unit = {
     kv += (key -> value)
-    val persist: Persist = Persist(key, Some(value), seq)
-    persistence ! persist
-    updateExpectedSeq(seq)
-    scheduleRetries(seq, persist)
+    registerAckAndPersist(key, seq, Some(value))
   }
 
 
+  def registerAckAndPersist(key: String, seq: Long, value: Option[String]): Unit = {
+    val persist: Persist = Persist(key, value, seq)
+    updateExpectedSeq(seq)
+    persistenceAcks += (seq ->(sender, persist))
+    scheduleRetries(seq, persist)
+    persistence ! persist
+  }
+
   def removeSnapshot(key: String, seq: Long): Unit = {
     kv -= (key)
-    val persist: Persist = Persist(key, None, seq)
-    persistence ! persist
-    updateExpectedSeq(seq)
-    scheduleRetries(seq, persist)
+    registerAckAndPersist(key,seq,None)
   }
 
   def find(key: String, id: Long): Unit = {
@@ -133,12 +135,14 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   def remove(key: String, id: Long): Unit = {
     kv -= (key)
-    sender ! OperationAck(id)
+    registerAckAndPersist(key,id,None)
+//    sender ! OperationAck(id)
   }
 
   def insert(key: String, value: String, id: Long): Unit = {
     kv += (key -> value)
-    sender ! OperationAck(id)
+    registerAckAndPersist(key, id, Some(value))
+//    sender ! OperationAck(id)
   }
 
   def scheduleRetries(seq: Long, persist: Persist): Unit = {
