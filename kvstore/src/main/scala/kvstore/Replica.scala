@@ -1,13 +1,14 @@
 package kvstore
 
-import scala.concurrent.duration._
-
 import akka.actor.SupervisorStrategy.Restart
 import akka.actor._
 import kvstore.Arbiter._
 import kvstore.Persistence.{Persist, Persisted, PersistenceException}
 import kvstore.Replica._
-import kvstore.Replicator.{Snapshot, SnapshotAck}
+import kvstore.Replicator.{Replicate, Replicated, Snapshot, SnapshotAck}
+
+import scala.concurrent.duration._
+import scala.util.Random
 
 object Replica {
 
@@ -69,21 +70,33 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case Get(key, id) =>
       find(key, id)
     case Replicas(replicas: Set[ActorRef]) =>
-      replicas foreach { replica =>
-        if(!secondaries.contains(replica)) {
-          context.watch(replica)
-          val replicator = context.actorOf(Replicator.props(replica))
-          secondaries += replica -> replicator
-          replicators += replicator
-        }
-      }
-    case Terminated(replica: ActorRef) =>
-      if(secondaries.contains(replica)){
-        val replicator: ActorRef = secondaries.get(replica).get
-        replicator ! PoisonPill
-        secondaries -= replica
-      }
+      addReplicas(replicas)
     case _ =>
+  }
+
+  def removeReplica(replica: ActorRef): Unit = {
+    if (secondaries.contains(replica)) {
+      val replicator: ActorRef = secondaries.get(replica).get
+      replicator ! PoisonPill
+      secondaries -= replica
+      replicators -= replicator
+    }
+  }
+
+  def addReplicas(newReplicas: Set[ActorRef]) = {
+    newReplicas filter (_ != self) foreach { replica =>
+      if (!secondaries.contains(replica)) {
+        val replicator = context.actorOf(Replicator.props(replica))
+        secondaries += replica -> replicator
+        replicators += replicator
+        kv foreach (keyVal => replicator ! Replicate(keyVal._1, Some(keyVal._2), Random.nextLong()))
+      }
+    }
+    secondaries foreach { sec =>
+      if (!newReplicas.contains(sec._1)) {
+        removeReplica(sec._1)
+      }
+    }
   }
 
   val replica: Receive = {
@@ -92,6 +105,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       if (seq < expectedSeq) {
         sender ! SnapshotAck(key, seq)
       } else if (seq == expectedSeq) {
+        updateExpectedSeq(seq)
         valueOptions match {
           case Some(value) =>
             insertSnapshot(key, seq, value)
@@ -118,31 +132,43 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   def remove(key: String, id: Long): Unit = {
     kv -= (key)
-    context.actorOf(Props(classOf[PersistenceHandlerActor], persistence, sender, Persist(key, None, id)))
+    context.actorOf(Props(classOf[PersistenceReplicationHandlerActor], persistence, sender, Persist(key, None, id), replicators))
   }
 
   def insert(key: String, value: String, id: Long): Unit = {
     kv += (key -> value)
-    context.actorOf(Props(classOf[PersistenceHandlerActor], persistence, sender, Persist(key, Some(value), id)))
+    context.actorOf(Props(classOf[PersistenceReplicationHandlerActor], persistence, sender, Persist(key, Some(value), id), replicators))
   }
 
 }
 
-class PersistenceHandlerActor(persistence: ActorRef, origin: ActorRef, persist: Persist) extends Actor {
+class PersistenceReplicationHandlerActor(persistence: ActorRef, origin: ActorRef, persist: Persist, replicators: Set[ActorRef]) extends Actor {
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
   persistence ! persist
-  context.setReceiveTimeout(1 second)
-  val retrySchedule: Cancellable = context.system.scheduler.schedule(100 millis, 100 millis, persistence, persist)
+  replicators.foreach(_ ! Replicate(persist.key, persist.valueOption, persist.id))
+  val persistenceRetries: Cancellable = context.system.scheduler.schedule(100 millis, 100 millis, persistence, persist)
+  context.system.scheduler.scheduleOnce(1 second, self, ReceiveTimeout)
+  var replicationCount = 0
+  var persisted = false
 
   def receive = {
     case Persisted(key, id) =>
-      retrySchedule.cancel()
-      origin ! OperationAck(id)
-      self ! PoisonPill
+      persistenceRetries.cancel()
+      persisted = true
+      if (replicationCount == replicators.size) {
+        origin ! OperationAck(id)
+        self ! PoisonPill
+      }
+    case Replicated(key, id) =>
+      replicationCount += 1
+      if (persisted && replicationCount == replicators.size) {
+        origin ! OperationAck(id)
+        self ! PoisonPill
+      }
     case ReceiveTimeout =>
-      retrySchedule.cancel()
+      persistenceRetries.cancel()
       origin ! OperationFailed(persist.id)
       self ! PoisonPill
   }
@@ -164,4 +190,7 @@ class SnapshotHandlerActor(persistence: ActorRef, origin: ActorRef, persist: Per
   }
 
 }
+
+class ReplicationWorker()
+
 
