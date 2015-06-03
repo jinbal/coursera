@@ -87,6 +87,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     newReplicas filter (_ != self) foreach { replica =>
       if (!secondaries.contains(replica)) {
         val replicator = context.actorOf(Replicator.props(replica))
+        context.watch(replicator)
         secondaries += replica -> replicator
         replicators += replicator
         kv foreach (keyVal => replicator ! Replicate(keyVal._1, Some(keyVal._2), Random.nextLong()))
@@ -147,9 +148,10 @@ class PersistenceReplicationHandlerActor(persistence: ActorRef, origin: ActorRef
   import scala.concurrent.ExecutionContext.Implicits.global
 
   persistence ! persist
-  replicators.foreach(_ ! Replicate(persist.key, persist.valueOption, persist.id))
+
   val persistenceRetries: Cancellable = context.system.scheduler.schedule(100 millis, 100 millis, persistence, persist)
   context.system.scheduler.scheduleOnce(1 second, self, ReceiveTimeout)
+  var expectedReplicationCount = replicators.size
   var replicationCount = 0
   var persisted = false
 
@@ -161,16 +163,26 @@ class PersistenceReplicationHandlerActor(persistence: ActorRef, origin: ActorRef
         origin ! OperationAck(id)
         self ! PoisonPill
       }
+      replicators.foreach { rep =>
+        context.watch(rep)
+        rep ! Replicate(persist.key, persist.valueOption, persist.id)
+      }
     case Replicated(key, id) =>
       replicationCount += 1
-      if (persisted && replicationCount == replicators.size) {
+      if (persisted && replicationCount == expectedReplicationCount) {
         origin ! OperationAck(id)
         self ! PoisonPill
       }
     case ReceiveTimeout =>
       persistenceRetries.cancel()
-      origin ! OperationFailed(persist.id)
-      self ! PoisonPill
+      if (persisted && replicationCount == expectedReplicationCount) {
+        origin ! OperationAck(persist.id)
+      } else {
+        origin ! OperationFailed(persist.id)
+      }
+        self ! PoisonPill
+    case Terminated(actor) =>
+      expectedReplicationCount -= 1
   }
 }
 
