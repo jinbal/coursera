@@ -1,12 +1,13 @@
 package kvstore
 
+import scala.concurrent.duration._
+
 import akka.actor.SupervisorStrategy.Restart
 import akka.actor._
 import kvstore.Arbiter._
 import kvstore.Persistence.{Persist, Persisted, PersistenceException}
 import kvstore.Replica._
 import kvstore.Replicator.{Snapshot, SnapshotAck}
-import scala.concurrent.duration._
 
 object Replica {
 
@@ -50,7 +51,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var persistenceAcks = Map.empty[Long, (ActorRef, Persist)]
   var retries = Map.empty[Long, Cancellable]
 
-
   override val supervisorStrategy: SupervisorStrategy = OneForOneStrategy() {
     case _: PersistenceException => Restart
   }
@@ -74,9 +74,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       remove(key, id)
     case Get(key, id) =>
       find(key, id)
-    case Persisted(key, id) =>
-      val ack: (ActorRef) = findSenderToConfirmPersistence(id)
-      ack ! OperationAck(id)
     case _ =>
   }
 
@@ -94,39 +91,17 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
             removeSnapshot(key, seq)
         }
       }
-    case Persisted(key, id) =>
-      val ack: (ActorRef) = findSenderToConfirmPersistence(id)
-      ack ! SnapshotAck(key, id)
-
     case _ =>
-  }
-
-  def findSenderToConfirmPersistence(id: Long) = {
-    val ack: (ActorRef, Persist) = persistenceAcks.get(id).get
-    persistenceAcks -= id
-    val cancellable: Cancellable = retries.get(id).get
-    cancellable.cancel()
-    retries -= id
-    ack._1
   }
 
   def insertSnapshot(key: String, seq: Long, value: String): Unit = {
     kv += (key -> value)
-    registerAckAndPersist(key, seq, Some(value))
-  }
-
-
-  def registerAckAndPersist(key: String, seq: Long, value: Option[String]): Unit = {
-    val persist: Persist = Persist(key, value, seq)
-    updateExpectedSeq(seq)
-    persistenceAcks += (seq ->(sender, persist))
-    scheduleRetries(seq, persist)
-    persistence ! persist
+    context.actorOf(Props(classOf[SnapshotHandlerActor], persistence, sender, Persist(key, Some(value), seq)))
   }
 
   def removeSnapshot(key: String, seq: Long): Unit = {
     kv -= (key)
-    registerAckAndPersist(key,seq,None)
+    context.actorOf(Props(classOf[SnapshotHandlerActor], persistence, sender, Persist(key, None, seq)))
   }
 
   def find(key: String, id: Long): Unit = {
@@ -135,20 +110,53 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   def remove(key: String, id: Long): Unit = {
     kv -= (key)
-    registerAckAndPersist(key,id,None)
-//    sender ! OperationAck(id)
+    context.actorOf(Props(classOf[PersistenceHandlerActor], persistence, sender, Persist(key, None, id)))
   }
 
   def insert(key: String, value: String, id: Long): Unit = {
     kv += (key -> value)
-    registerAckAndPersist(key, id, Some(value))
-//    sender ! OperationAck(id)
+    context.actorOf(Props(classOf[PersistenceHandlerActor], persistence, sender, Persist(key, Some(value), id)))
   }
 
   def scheduleRetries(seq: Long, persist: Persist): Unit = {
     retries += seq -> context.system.scheduler.schedule(100 millis, 100 millis, persistence, persist)
   }
+}
 
+class PersistenceHandlerActor(persistence: ActorRef, origin: ActorRef, persist: Persist) extends Actor {
+
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+  persistence ! persist
+  context.setReceiveTimeout(1 second)
+  val retrySchedule: Cancellable = context.system.scheduler.schedule(100 millis, 100 millis, persistence, persist)
+
+  def receive = {
+    case Persisted(key, id) =>
+      retrySchedule.cancel()
+      origin ! OperationAck(id)
+      self ! PoisonPill
+    case ReceiveTimeout =>
+      retrySchedule.cancel()
+      origin ! OperationFailed(persist.id)
+      self ! PoisonPill
+  }
+}
+
+class SnapshotHandlerActor(persistence: ActorRef, origin: ActorRef, persist: Persist) extends Actor {
+
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+  persistence ! persist
+
+  val retrySchedule: Cancellable = context.system.scheduler.schedule(100 millis, 100 millis, persistence, persist)
+
+  def receive = {
+    case Persisted(key, id) =>
+      retrySchedule.cancel()
+      origin ! SnapshotAck(key, id)
+      self ! PoisonPill
+  }
 
 }
 
