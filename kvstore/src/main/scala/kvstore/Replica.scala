@@ -36,8 +36,6 @@ object Replica {
 
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
-  import scala.concurrent.ExecutionContext.Implicits.global
-
   arbiter ! Join
 
   val persistence = context.actorOf(persistenceProps)
@@ -71,6 +69,20 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case Get(key, id) =>
       find(key, id)
     case Replicas(replicas: Set[ActorRef]) =>
+      replicas foreach { replica =>
+        if(!secondaries.contains(replica)) {
+          context.watch(replica)
+          val replicator = context.actorOf(Replicator.props(replica))
+          secondaries += replica -> replicator
+          replicators += replicator
+        }
+      }
+    case Terminated(replica: ActorRef) =>
+      if(secondaries.contains(replica)){
+        val replicator: ActorRef = secondaries.get(replica).get
+        replicator ! PoisonPill
+        secondaries -= replica
+      }
     case _ =>
   }
 
@@ -114,9 +126,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     context.actorOf(Props(classOf[PersistenceHandlerActor], persistence, sender, Persist(key, Some(value), id)))
   }
 
-  def scheduleRetries(seq: Long, persist: Persist): Unit = {
-    retries += seq -> context.system.scheduler.schedule(100 millis, 100 millis, persistence, persist)
-  }
 }
 
 class PersistenceHandlerActor(persistence: ActorRef, origin: ActorRef, persist: Persist) extends Actor {
