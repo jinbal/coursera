@@ -148,7 +148,10 @@ class PersistenceReplicationHandlerActor(persistence: ActorRef, origin: ActorRef
   import scala.concurrent.ExecutionContext.Implicits.global
 
   persistence ! persist
-
+  replicators.foreach { rep =>
+    context.watch(rep)
+    rep ! Replicate(persist.key, persist.valueOption, persist.id)
+  }
   val persistenceRetries: Cancellable = context.system.scheduler.schedule(100 millis, 100 millis, persistence, persist)
   context.system.scheduler.scheduleOnce(1 second, self, ReceiveTimeout)
   var expectedReplicationCount = replicators.size
@@ -163,10 +166,7 @@ class PersistenceReplicationHandlerActor(persistence: ActorRef, origin: ActorRef
         origin ! OperationAck(id)
         self ! PoisonPill
       }
-      replicators.foreach { rep =>
-        context.watch(rep)
-        rep ! Replicate(persist.key, persist.valueOption, persist.id)
-      }
+
     case Replicated(key, id) =>
       replicationCount += 1
       if (persisted && replicationCount == expectedReplicationCount) {
