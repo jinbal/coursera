@@ -48,9 +48,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
 
-  var persistenceAcks = Map.empty[Long, (ActorRef, Persist)]
-  var retries = Map.empty[Long, Cancellable]
-
   override val supervisorStrategy: SupervisorStrategy = OneForOneStrategy() {
     case _: PersistenceException => Restart
   }
@@ -66,7 +63,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case JoinedSecondary => context.become(replica)
   }
 
-  /* TODO Behavior for  the leader role. */
   val leader: Receive = {
     case Insert(key, value, id) =>
       insert(key, value, id)
@@ -74,10 +70,10 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       remove(key, id)
     case Get(key, id) =>
       find(key, id)
+    case Replicas(replicas: Set[ActorRef]) =>
     case _ =>
   }
 
-  /* TODO Behavior for the replica role. */
   val replica: Receive = {
     case Get(key, id) => find(key, id)
     case Snapshot(key, valueOptions, seq) =>
